@@ -33,7 +33,7 @@ jobs:
         net user runneradmin $password
 
         Write-Host "==> Chạy ngrok tunnel..."
-        Start-Process -NoNewWindow $ngrok_path tcp 3389
+        Start-Process -NoNewWindow -FilePath $ngrok_path -ArgumentList "tcp", "3389"
         Start-Sleep -Seconds 15
 
         Write-Host "==> Lấy thông tin kết nối..."
