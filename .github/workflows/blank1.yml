@@ -7,17 +7,25 @@ jobs:
     timeout-minutes: 360
 
     steps:
-    - name: Setup RDP & Ngrok
+    - name: Setup RDP & Ngrok (Fixed Path)
       shell: pwsh
       run: |
         # === Cấu hình ===
-        $ngrok_token = "355xkUcr6M0FvUN2PTK95Thc2Oe_2MSosbmm57GYoMJP7dUiR"
+        $ngrok_token = "NHẬP_TOKEN_CỦA_BẠN_VÀO_ĐÂY"
         $password = "Rdp123456"
 
         Write-Host "==> Cài ngrok..."
         Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-amd64.zip -OutFile ngrok.zip
-        Expand-Archive ngrok.zip -DestinationPath .
-        .\ngrok\ngrok.exe authtoken $ngrok_token
+        Expand-Archive ngrok.zip -DestinationPath "$env:USERPROFILE"
+        $ngrok_path = "$env:USERPROFILE\\ngrok.exe"
+
+        # Nếu không có file .exe thì copy từ thư mục con
+        if (!(Test-Path $ngrok_path)) {
+          $sub = Get-ChildItem -Path "$env:USERPROFILE" -Recurse -Filter "ngrok.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($sub) { Copy-Item $sub.FullName $ngrok_path -Force }
+        }
+
+        & $ngrok_path authtoken $ngrok_token
 
         Write-Host "==> Bật RDP..."
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
@@ -25,7 +33,7 @@ jobs:
         net user runneradmin $password
 
         Write-Host "==> Chạy ngrok tunnel..."
-        Start-Process -NoNewWindow .\ngrok\ngrok.exe tcp 3389
+        Start-Process -NoNewWindow $ngrok_path tcp 3389
         Start-Sleep -Seconds 15
 
         Write-Host "==> Lấy thông tin kết nối..."
@@ -52,3 +60,4 @@ jobs:
 
         Write-Host "Giữ RDP hoạt động 6 tiếng..."
         Start-Sleep -Seconds 21600
+
