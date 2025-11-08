@@ -16,7 +16,7 @@ jobs:
 
       - name: Set RDP Password
         run: |
-          $password = ConvertTo-SecureString "123456" -AsPlainText -Force
+          $password = ConvertTo-SecureString "Huyhz123@" -AsPlainText -Force
           Set-LocalUser -Name "runneradmin" -Password $password
 
       - name: Download Cloudflared
@@ -30,6 +30,10 @@ jobs:
 
       - name: Show Cloudflare RDP URL
         run: |
+          Get-Content cloudflared.log -ErrorAction SilentlyContinue | Select-String "trycloudflare.com"
+
+      - name: Keep Alive
+        run: ping -t 127.0.0.1
           Get-Content cloudflared.log -ErrorAction SilentlyContinue | Select-String "trycloudflare.com"
 
       - name: Keep Alive
