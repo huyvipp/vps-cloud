@@ -4,122 +4,58 @@ on:
   workflow_dispatch:
 
 jobs:
-  windows-rdp:
+  build:
     runs-on: windows-latest
-    timeout-minutes: 360   # tối đa 6 tiếng (360 phút)
-
     steps:
-    - name: Show start
-      run: echo "Starting Windows RDP job..."
+      - name: Show start
+        run: echo "Starting Windows RDP setup..."
 
-    - name: Configure RDP user & enable RDP
-      shell: pwsh
-      env:
-        RDP_PASSWORD: ${{ 'huyhz123@' }}
-      run: |
-        try {
+      - name: Configure RDP user & enable RDP
+        shell: pwsh
+        env:
+          RDP_PASSWORD: ${{ 'Huyhz123@' }}
+        run: |
           Write-Host "Creating local user 'rdpuser'..."
           $securePass = ConvertTo-SecureString $env:RDP_PASSWORD -AsPlainText -Force
-          # If user exists, reset password; otherwise create
           if (Get-LocalUser -Name "rdpuser" -ErrorAction SilentlyContinue) {
-            Write-Host "User exists; resetting password..."
-            $user = Get-LocalUser -Name "rdpuser"
-            $user | Set-LocalUser -Password $securePass
+              Write-Host "User exists, resetting password..."
+              Set-LocalUser -Name "rdpuser" -Password $securePass
           } else {
-           New-LocalUser -Name "rdpuser" -Password $securePass -FullName "RDP User" -Description "Temporary RDP user from GitHub Actions"
-            Write-Host "User created."
+              Write-Host "Creating new user..."
+              New-LocalUser -Name "rdpuser" -Password $securePass -FullName "RDP User" -Description "User for RDP access"
           }
-          # Add to administrators for convenience (optional). You can choose Remote Desktop Users group instead.
-          Add-LocalGroupMember -Group "Administrators" -Member "rdpuser" -ErrorAction SilentlyContinue
-          Write-Host "Added rdpuser to Administrators."
 
-          Write-Host "Enabling Remote Desktop (registry)..."
+          Add-LocalGroupMember -Group "Administrators" -Member "rdpuser"
+
+          Write-Host "Enabling Remote Desktop..."
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
 
-          Write-Host "Enabling Remote Desktop firewall rules..."
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
+          Write-Host "Enabling firewall rules for RDP..."
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-          Write-Host "RDP should be enabled now."
-        } catch {
-          Write-Error "Error configuring user/RDP: $_"
-          throw $_
-        }
+          Write-Host "✅ RDP configured successfully."
 
-    - name: Download ngrok
-      shell: pwsh
-      run: |
-        $ngrokZip = "$env:RUNNER_TEMP\ngrok.zip"
-        Invoke-WebRequest -OutFile $ngrokZip -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-amd64.zip"
-        Expand-Archive -Path $ngrokZip -DestinationPath "$env:RUNNER_TEMP\ngrok"
-        $ngrokExe = Join-Path $env:RUNNER_TEMP "ngrok\ngrok.exe"
-        Write-Host "ngrok downloaded to: $ngrokExe"
-        Set-Location $env:RUNNER_TEMP
+      - name: Download ngrok
+        run: |
+          Invoke-WebRequest https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-windows-amd64.zip -OutFile ngrok.zip
+          Expand-Archive ngrok.zip
+          Copy-Item ngrok\ngrok.exe -Destination .
 
-    - name: Start ngrok TCP tunnel for RDP
-      shell: pwsh
-      env:
-        NGROK_TOKEN: ${{ '355xkUcr6M0FvUN2PTK95Thc2Oe_2MSosbmm57GYoMJP7dUiR' }}
-      run: |
-        $ngrokExe = Join-Path $env:RUNNER_TEMP "ngrok\ngrok.exe"
-        if (-not (Test-Path $ngrokExe)) { throw "ngrok executable not found: $ngrokExe" }
-        Write-Host "Setting ngrok authtoken..."
-        & $ngrokExe authtoken $env:NGROK_TOKEN
+      - name: Start ngrok TCP tunnel for RDP
+        env:
+          NGROK_AUTH_TOKEN: ${{ '355xkUcr6M0FvUN2PTK95Thc2Oe_2MSosbmm57GYoMJP7dUiR' }}
+        run: |
+          .\ngrok.exe authtoken $env:NGROK_AUTH_TOKEN
+          Start-Process -FilePath .\ngrok.exe -ArgumentList "tcp 3389" -NoNewWindow
+          Start-Sleep -Seconds 10
+          Invoke-WebRequest -Uri "http://127.0.0.1:4040/api/tunnels" | Out-File tunnel.json
+          Get-Content tunnel.json
 
-        Write-Host "Starting ngrok TCP tunnel for port 3389 (RDP)..."
-        # start ngrok in background, capture PID
-        Start-Process -FilePath $ngrokExe -ArgumentList "tcp 3389 --log=stdout" -WindowStyle Hidden
-
-        # wait a bit for ngrok to spin up
-        Start-Sleep -Seconds 6
-
-        # poll local ngrok API for tunnel details
-        $found = $false
-        for ($i=0; $i -lt 12; $i++) {
-          try {
-            $tunnels = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -ErrorAction Stop
-            if ($tunnels.tunnels.Count -gt 0) {
-              $public = $tunnels.tunnels[0].public_url
-              Write-Host "ngrok public URL: $public"
-              $found = $true
-              break
-            }
-          } catch {
-            Start-Sleep -Seconds 2
+      - name: Keep alive
+        shell: pwsh
+        run: |
+          Write-Host "Runner will stay alive for 6 hours (360m)..."
+          for ($i = 0; $i -lt 360; $i++) {
+            Start-Sleep -Seconds 60
           }
-        }
-        if (-not $found) {
-          Write-Warning "Không lấy được ngrok public URL trong thời gian chờ. Kiểm tra ngrok log."
-          # show some ngrok output just in case
-          Get-ChildItem "$env:RUNNER_TEMP\ngrok" -Recurse | Select-Object -First 10
-        }
 
-    - name: Print connection instructions
-      shell: pwsh
-      env:
-        RDP_PASSWORD: ${{ 'huyhz123@' }}
-      run: |
-        try {
-          $tunnels = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels"
-          $public = $tunnels.tunnels[0].public_url
-          Write-Host "=== RDP connection info ==="
-          Write-Host "Public tunnel: $public"
-          # public_url looks like tcp://0.tcp.ngrok.io:XXXXX
-          $uri = [uri]$public
-          $host = $uri.Host
-          $port = $uri.Port
-          Write-Host "Use Remote Desktop Client (mstsc) or any RDP client:"
-          Write-Host "Host: $host"
-          Write-Host "Port: $port"
-          Write-Host "Username: rdpuser"
-          Write-Host "Password: (secret from repo secret RDP_PASSWORD)"
-          Write-Host "Example (mstsc): mstsc /v:$host`:$port"
-          Write-Host "=== End info ==="
-        } catch {
-          Write-Warning "Không thể hiển thị connection info: $_"
-        }
-
-    - name: Keep runner alive (interactive tail)
-      shell: pwsh
-      run: |
-        Write-Host "Runner will stay alive until timeout-minutes (360m). Sleeping loop..."
-        while ($true) { Start-Sleep -Seconds 60 }
