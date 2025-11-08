@@ -52,7 +52,8 @@ jobs:
       - name: ☁️ Start Cloudflare Tunnel
         run: |
           Invoke-WebRequest -Uri https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe -OutFile cloudflared.exe
-          Start-Process -NoNewWindow ".\cloudflared.exe" "tunnel --url http://127.0.0.1:6080 --no-autoupdate --edge-ip-version auto" -RedirectStandardOutput cloudflared.log
+          Start-Process -WindowStyle Hidden -FilePath "python" -ArgumentList "../websockify/run", "6080", "localhost:5900"
+          Write-Host "✅ noVNC server started on port 6080"
           Start-Sleep -Seconds 15
           Get-Content cloudflared.log | Select-String "trycloudflare.com"
 
