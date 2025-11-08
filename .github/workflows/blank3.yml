@@ -12,7 +12,7 @@ jobs:
     - name: Info
       run: echo "Starting Windows RDP via localtunnel..."
 
-    - name: Setup NodeJS (for localtunnel)
+    - name: Setup NodeJS
       uses: actions/setup-node@v3
       with:
         node-version: '18'
@@ -20,81 +20,73 @@ jobs:
     - name: Create RDP user & enable RDP
       shell: pwsh
       run: |
-        Write-Host "==> Creating 'rdpuser'..."
+        Write-Host "==> Creating RDP user..."
         $pass = "Huyhz@123"
-        # create user if missing (if exists, reset password)
         if (Get-LocalUser -Name rdpuser -ErrorAction SilentlyContinue) {
           Write-Host "User exists, resetting password..."
           Set-LocalUser -Name "rdpuser" -Password (ConvertTo-SecureString $pass -AsPlainText -Force)
         } else {
-          New-LocalUser -Name "rdpuser" -Password (ConvertTo-SecureString $pass -AsPlainText -Force) -FullName "RDP User" -Description "Temporary RDP user"
+          New-LocalUser -Name "rdpuser" -Password (ConvertTo-SecureString $pass -AsPlainText -Force)
         }
         Add-LocalGroupMember -Group "Administrators" -Member "rdpuser" -ErrorAction SilentlyContinue
-        Write-Host "Enabling Remote Desktop..."
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections' -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        Write-Host "User rdpuser created / configured. Password: $pass"
-        # expose variable for later logging (not secret)
-        echo "##[set-output name=RDP_USER;]rdpuser" > $env:GITHUB_OUTPUT
-        echo "##[set-output name=RDP_PASS;]$pass" >> $env:GITHUB_OUTPUT
+        Write-Host "✅ User: rdpuser | Pass: $pass"
 
-    - name: Install localtunnel globally
+    - name: Install LocalTunnel
       shell: pwsh
       run: |
-        Write-Host "==> Installing localtunnel..."
         npm install -g localtunnel
-        Write-Host "LocalTunnel installed. Checking binary locations..."
-        where.exe lt || where.exe npx || Write-Host "lt/npx not found in PATH - install may have failed."
+        Write-Host "✅ LocalTunnel installed."
 
-    - name: Start localtunnel (background) and capture link
+    - name: Start LocalTunnel
       shell: pwsh
       run: |
         Write-Host "==> Starting localtunnel on port 3389..."
-        # Use npx to avoid Win32-shim issues; redirect output to file
-        # Start-Process uses the 'npx' shim. We use -ArgumentList as array.
-        $log = Join-Path $env:RUNNER_TEMP "lt_log.txt"
-        # Start background npx localtunnel
-        $proc = Start-Process -FilePath "npx" -ArgumentList "localtunnel","--port","3389" -RedirectStandardOutput $log -RedirectStandardError $log -NoNewWindow -PassThru
-        Write-Host "Started process Id: $($proc.Id). Waiting for link..."
+        $logOut = "$env:RUNNER_TEMP\lt_out.txt"
+        $logErr = "$env:RUNNER_TEMP\lt_err.txt"
+
+        # Start process and redirect output separately to avoid PowerShell bug
+        $proc = Start-Process -FilePath "npx" `
+          -ArgumentList "localtunnel","--port","3389" `
+          -RedirectStandardOutput $logOut `
+          -RedirectStandardError $logErr `
+          -NoNewWindow -PassThru
+
+        Write-Host "Process started PID=$($proc.Id)"
         Start-Sleep -Seconds 5
 
         $link = $null
-        $tries = 0
-        while (-not $link -and $tries -lt 40) {
+        for ($i=0; $i -lt 40; $i++) {
           Start-Sleep -Seconds 2
-          if (Test-Path $log) {
-            $content = Get-Content $log -Raw -ErrorAction SilentlyContinue
-            if ($content -match "https://[-a-z0-9]+\.loca\.lt") {
+          if (Test-Path $logOut) {
+            $txt = Get-Content $logOut -Raw -ErrorAction SilentlyContinue
+            if ($txt -match "https://[a-z0-9\-]+\.loca\.lt") {
               $link = $matches[0]
               break
             }
-            # newer versions may print different domain, also check for 'https://' occurrences
-            if ($content -match "https://[^\s]+") {
-              $link = ($matches[0])
-              break
-            }
           }
-          $tries++
         }
 
         if ($link) {
           Write-Host ""
-          Write-Host "✅ LOCALTUNNEL LINK FOUND!"
-          Write-Host "🔗 $link"
-          Write-Host "User: rdpuser"
-          Write-Host "Pass: Huyhz@123"
+          Write-Host "✅ Found tunnel!"
+          Write-Host "🔗 Link: $link"
+          Write-Host "👤 User: rdpuser"
+          Write-Host "🔑 Pass: Huyhz@123"
           Write-Host ""
         } else {
-          Write-Host "❌ Could not find localtunnel link in log file. Dumping log for debug:"
-          if (Test-Path $log) { Get-Content $log -Tail 200 } else { Write-Host "(log not found)" }
-          throw "Failed to obtain localtunnel link - try rerunning the workflow."
+          Write-Host "❌ Failed to get tunnel link. Dumping logs..."
+          if (Test-Path $logOut) { Get-Content $logOut -Tail 20 }
+          if (Test-Path $logErr) { Get-Content $logErr -Tail 20 }
+          throw "No tunnel link found — try re-running."
         }
 
-    - name: Keep session alive (6 hours)
+    - name: Keep alive
       shell: pwsh
       run: |
-        Write-Host "Session kept alive for up to 6 hours. Stop early to free runner."
-        for ($i = 0; $i -lt 360; $i++) {
+        Write-Host "Keeping session alive for 6 hours..."
+        for ($i=0; $i -lt 360; $i++) {
           Start-Sleep -Seconds 60
-          if ($i % 10 -eq 0) { Write-Host "Alive: $i minutes" }
+          if ($i % 10 -eq 0) { Write-Host "Alive $i minutes" }
         }
