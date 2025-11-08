@@ -13,8 +13,8 @@ jobs:
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          $password = ConvertTo-SecureString "123456" -AsPlainText -Force
-          Set-LocalUser -Name "runneradmin" -Password $password
+          $password = ConvertTo-SecureString "Huyhz123@" -AsPlainText -Force
+          Set-LocalUser -Name "runneradmin1" -Password $password
 
       - name: 🧰 Install noVNC and Websockify
         run: |
@@ -50,6 +50,10 @@ jobs:
         run: |
           echo "🔗 Mở link bên dưới để truy cập Windows GUI qua web:"
           Get-Content cloudflared.log -ErrorAction SilentlyContinue | Select-String "trycloudflare.com"
+
+      - name: 🕒 Keep session alive
+        run: ping -t 127.0.0.1
+
 
       - name: 🕒 Keep session alive
         run: ping -t 127.0.0.1
