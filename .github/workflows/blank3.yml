@@ -1,68 +1,100 @@
-name: Free Windows RDP via LocalTunnel
+name: Windows RDP via NodeJS LocalTunnel
 
 on:
   workflow_dispatch:
 
 jobs:
-  build:
+  rdp-localtunnel:
     runs-on: windows-latest
     timeout-minutes: 360
 
     steps:
-    - name: Tạo user RDP
-      shell: pwsh
-      run: |
-        Write-Host "==> Tạo user RDP..."
-        net user rdpuser Huyhz@123 /add
-        net localgroup administrators rdpuser /add
-        reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f
-        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        Write-Host "✅ User rdpuser tạo xong."
-- name: Cài NodeJS
-  uses: actions/setup-node@v3
-  with:
-    node-version: '18'
-- name: Cài và chạy LocalTunnel
-  run: |
-    npm install -g localtunnel
-    lt --port 3389 > tunnel.log 2>&1 &
-    timeout /t 5
-    type tunnel.log
-    - name: Chạy LocalTunnel để mở cổng RDP
-      shell: pwsh
-      run: |
-        Write-Host "==> Đang khởi chạy LocalTunnel tới cổng 3389..."
-        Start-Process -FilePath "lt" -ArgumentList "--port", "3389" -RedirectStandardOutput "lt_log.txt" -NoNewWindow
-        Start-Sleep -Seconds 10
+    - name: Info
+      run: echo "Starting Windows RDP via localtunnel..."
 
-        # Đọc link public
-        $tries = 0
+    - name: Setup NodeJS (for localtunnel)
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+
+    - name: Create RDP user & enable RDP
+      shell: pwsh
+      run: |
+        Write-Host "==> Creating 'rdpuser'..."
+        $pass = "Huyhz@123"
+        # create user if missing (if exists, reset password)
+        if (Get-LocalUser -Name rdpuser -ErrorAction SilentlyContinue) {
+          Write-Host "User exists, resetting password..."
+          Set-LocalUser -Name "rdpuser" -Password (ConvertTo-SecureString $pass -AsPlainText -Force)
+        } else {
+          New-LocalUser -Name "rdpuser" -Password (ConvertTo-SecureString $pass -AsPlainText -Force) -FullName "RDP User" -Description "Temporary RDP user"
+        }
+        Add-LocalGroupMember -Group "Administrators" -Member "rdpuser" -ErrorAction SilentlyContinue
+        Write-Host "Enabling Remote Desktop..."
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections' -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        Write-Host "User rdpuser created / configured. Password: $pass"
+        # expose variable for later logging (not secret)
+        echo "##[set-output name=RDP_USER;]rdpuser" > $env:GITHUB_OUTPUT
+        echo "##[set-output name=RDP_PASS;]$pass" >> $env:GITHUB_OUTPUT
+
+    - name: Install localtunnel globally
+      shell: pwsh
+      run: |
+        Write-Host "==> Installing localtunnel..."
+        npm install -g localtunnel
+        Write-Host "LocalTunnel installed. Checking binary locations..."
+        where.exe lt || where.exe npx || Write-Host "lt/npx not found in PATH - install may have failed."
+
+    - name: Start localtunnel (background) and capture link
+      shell: pwsh
+      run: |
+        Write-Host "==> Starting localtunnel on port 3389..."
+        # Use npx to avoid Win32-shim issues; redirect output to file
+        # Start-Process uses the 'npx' shim. We use -ArgumentList as array.
+        $log = Join-Path $env:RUNNER_TEMP "lt_log.txt"
+        # Start background npx localtunnel
+        $proc = Start-Process -FilePath "npx" -ArgumentList "localtunnel","--port","3389" -RedirectStandardOutput $log -RedirectStandardError $log -NoNewWindow -PassThru
+        Write-Host "Started process Id: $($proc.Id). Waiting for link..."
+        Start-Sleep -Seconds 5
+
         $link = $null
-        while (-not $link -and $tries -lt 30) {
-          if (Test-Path "lt_log.txt") {
-            $log = Get-Content "lt_log.txt" -Raw
-            if ($log -match "https://[-a-z0-9]+\.loca\.lt") {
+        $tries = 0
+        while (-not $link -and $tries -lt 40) {
+          Start-Sleep -Seconds 2
+          if (Test-Path $log) {
+            $content = Get-Content $log -Raw -ErrorAction SilentlyContinue
+            if ($content -match "https://[-a-z0-9]+\.loca\.lt") {
               $link = $matches[0]
               break
             }
+            # newer versions may print different domain, also check for 'https://' occurrences
+            if ($content -match "https://[^\s]+") {
+              $link = ($matches[0])
+              break
+            }
           }
-          Start-Sleep -Seconds 2
           $tries++
         }
 
         if ($link) {
           Write-Host ""
-          Write-Host "✅ ✅ ✅  KẾT NỐI THÀNH CÔNG  ✅ ✅ ✅"
-          Write-Host "🌐 LINK: $link"
-          Write-Host "👤 USER: rdpuser"
-          Write-Host "🔑 PASS: Huyhz@123"
-          Write-Host "⚠️ Dùng link này để tạo kết nối proxy tới RDP (TCP 3389)."
+          Write-Host "✅ LOCALTUNNEL LINK FOUND!"
+          Write-Host "🔗 $link"
+          Write-Host "User: rdpuser"
+          Write-Host "Pass: Huyhz@123"
+          Write-Host ""
         } else {
-          Write-Host "❌ Không thể lấy link LocalTunnel, có thể server đang quá tải."
+          Write-Host "❌ Could not find localtunnel link in log file. Dumping log for debug:"
+          if (Test-Path $log) { Get-Content $log -Tail 200 } else { Write-Host "(log not found)" }
+          throw "Failed to obtain localtunnel link - try rerunning the workflow."
         }
 
-    - name: Giữ RDP hoạt động 6 tiếng
+    - name: Keep session alive (6 hours)
       shell: pwsh
       run: |
-        Write-Host "==> Giữ RDP hoạt động trong 6 tiếng..."
-        Start-Sleep -Seconds 21600
+        Write-Host "Session kept alive for up to 6 hours. Stop early to free runner."
+        for ($i = 0; $i -lt 360; $i++) {
+          Start-Sleep -Seconds 60
+          if ($i % 10 -eq 0) { Write-Host "Alive: $i minutes" }
+        }
