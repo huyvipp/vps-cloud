@@ -1,0 +1,55 @@
+name: Windows VNC (Cloudflare)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Set up environment
+        run: |
+          echo Setting up Windows environment...
+
+      - name: Download TightVNC Server
+        run: |
+          Invoke-WebRequest -Uri "https://www.tightvnc.com/download/2.8.75/tightvnc-2.8.75-gpl-setup-64bit.msi" -OutFile "tightvnc.msi"
+          Start-Process msiexec.exe -Wait -ArgumentList '/i tightvnc.msi /quiet /norestart'
+
+      - name: Configure VNC password
+        run: |
+          mkdir $env:APPDATA\TightVNC
+          $password = "123456"
+          echo "Setting VNC password..."
+          $bytes = [System.Text.Encoding]::ASCII.GetBytes($password)
+          [System.IO.File]::WriteAllBytes("$env:APPDATA\TightVNC\passwd", $bytes)
+
+      - name: Start TightVNC Server
+        run: |
+          Start-Process -FilePath "C:\Program Files\TightVNC\tvnserver.exe" -ArgumentList "-run" -WindowStyle Hidden
+          Start-Sleep -Seconds 5
+          echo "TightVNC Server started on port 5900"
+
+      - name: Download Cloudflared
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "cloudflared.exe"
+
+      - name: Start Cloudflared tunnel
+        run: |
+          Start-Process -FilePath "cloudflared.exe" -ArgumentList "tunnel --url tcp://localhost:5900 --no-autoupdate" -WindowStyle Hidden
+          Start-Sleep -Seconds 10
+          Get-Content -Path .\cloudflared.log -ErrorAction SilentlyContinue
+
+      - name: Show Cloudflared public URL
+        run: |
+          echo "Waiting for Cloudflared tunnel URL..."
+          Start-Sleep -Seconds 8
+          Get-Content cloudflared.log -ErrorAction SilentlyContinue | Select-String "trycloudflare.com"
+
+      - name: Keep session alive
+        run: |
+          echo "✅ VNC server is running. Use the Cloudflare TCP URL shown above."
+          echo "⏳ Session will stay alive for up to 6 hours."
+          ping -t 127.0.0.1
