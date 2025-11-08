@@ -96,7 +96,7 @@ jobs:
     - name: Print connection instructions
       shell: pwsh
       env:
-        RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
+        RDP_PASSWORD: ${{ 'huyhz123@' }}
       run: |
         try {
           $tunnels = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels"
