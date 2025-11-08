@@ -1,0 +1,54 @@
+name: Windows RDP by Ngrok (Auto)
+on: workflow_dispatch
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+    - name: Setup RDP & Ngrok
+      shell: pwsh
+      run: |
+        # === Cấu hình ===
+        $ngrok_token = "355xkUcr6M0FvUN2PTK95Thc2Oe_2MSosbmm57GYoMJP7dUiR"
+        $password = "Rdp123456"
+
+        Write-Host "==> Cài ngrok..."
+        Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-amd64.zip -OutFile ngrok.zip
+        Expand-Archive ngrok.zip -DestinationPath .
+        .\ngrok\ngrok.exe authtoken $ngrok_token
+
+        Write-Host "==> Bật RDP..."
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        net user runneradmin $password
+
+        Write-Host "==> Chạy ngrok tunnel..."
+        Start-Process -NoNewWindow .\ngrok\ngrok.exe tcp 3389
+        Start-Sleep -Seconds 15
+
+        Write-Host "==> Lấy thông tin kết nối..."
+        $retry = 0
+        while ($retry -lt 10) {
+          try {
+            $response = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels"
+            $public = $response.tunnels.public_url
+            if ($public) {
+              Write-Host "✅ RDP ready!"
+              Write-Host "============================="
+              Write-Host "Address: $public"
+              Write-Host "User: runneradmin"
+              Write-Host "Pass: $password"
+              Write-Host "============================="
+              break
+            }
+          } catch {
+            Write-Host "⏳ Waiting ngrok..."
+          }
+          Start-Sleep -Seconds 5
+          $retry++
+        }
+
+        Write-Host "Giữ RDP hoạt động 6 tiếng..."
+        Start-Sleep -Seconds 21600
