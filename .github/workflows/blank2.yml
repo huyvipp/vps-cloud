@@ -1,4 +1,4 @@
-name: Windows RDP via Cloudflared (Free, No Card, Fixed)
+name: Windows RDP via Cloudflared (Fixed Link Output)
 
 on:
   workflow_dispatch:
@@ -23,17 +23,37 @@ jobs:
       run: |
         Invoke-WebRequest -Uri https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe -OutFile cloudflared.exe
 
-    - name: Chạy Cloudflared Tunnel
+    - name: Khởi động Cloudflared Tunnel
       shell: pwsh
       run: |
-        Write-Host "==> Mở tunnel RDP qua Cloudflare..."
-        Start-Process -NoNewWindow -FilePath ".\cloudflared.exe" -ArgumentList "tunnel", "--url", "rdp://localhost:3389" -RedirectStandardOutput tunnel.log
-        Start-Sleep -Seconds 15
-        Write-Host "==> Link truy cập RDP:"
-        Get-Content tunnel.log | Select-String "trycloudflare.com"
+        Write-Host "==> Khởi chạy Cloudflared tunnel..."
+        Start-Process -FilePath ".\cloudflared.exe" -ArgumentList "tunnel", "--url", "rdp://localhost:3389" -RedirectStandardOutput "cloudflared.log" -NoNewWindow
+        Write-Host "⏳ Đang khởi tạo kết nối... (chờ ~20 giây)"
+        Start-Sleep -Seconds 20
 
-    - name: Giữ kết nối hoạt động 6 tiếng
+        # Đọc log để lấy link trycloudflare
+        $attempts = 0
+        $link = $null
+        while (-not $link -and $attempts -lt 30) {
+          Start-Sleep -Seconds 2
+          if (Test-Path "cloudflared.log") {
+            $content = Get-Content "cloudflared.log" -Raw
+            if ($content -match "https://[-a-z0-9]+\.trycloudflare\.com") {
+              $link = $matches[0]
+            }
+          }
+          $attempts++
+        }
+
+        if ($link) {
+          Write-Host "✅ ====> LINK RDP: $link"
+          Write-Host "👉 Dùng link trên làm server RDP."
+        } else {
+          Write-Host "❌ Không tìm thấy link Cloudflare, thử chạy lại job."
+        }
+
+    - name: Giữ phiên hoạt động 6 tiếng
       shell: pwsh
       run: |
-        Write-Host "==> RDP hoạt động trong 6 tiếng..."
+        Write-Host "==> RDP sẽ hoạt động trong 6 tiếng..."
         Start-Sleep -Seconds 21600
