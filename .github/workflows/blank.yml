@@ -15,7 +15,7 @@ jobs:
     - name: Configure RDP user & enable RDP
       shell: pwsh
       env:
-        RDP_PASSWORD: ${{ huyhz123@ }}
+        RDP_PASSWORD: ${{ 'huyhz123@' }}
       run: |
         try {
           Write-Host "Creating local user 'rdpuser'..."
@@ -58,7 +58,7 @@ jobs:
     - name: Start ngrok TCP tunnel for RDP
       shell: pwsh
       env:
-        NGROK_TOKEN: ${{ 355xkUcr6M0FvUN2PTK95Thc2Oe_2MSosbmm57GYoMJP7dUiR }}
+        NGROK_TOKEN: ${{ '355xkUcr6M0FvUN2PTK95Thc2Oe_2MSosbmm57GYoMJP7dUiR' }}
       run: |
         $ngrokExe = Join-Path $env:RUNNER_TEMP "ngrok\ngrok.exe"
         if (-not (Test-Path $ngrokExe)) { throw "ngrok executable not found: $ngrokExe" }
