@@ -1,4 +1,4 @@
-name: Windows VNC via Cloudflare
+name: Windows 11 RDP + VNC Cloud Tunnel
 
 on:
   workflow_dispatch:
@@ -6,75 +6,62 @@ on:
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 360
+    timeout-minutes: 9999
 
     steps:
-    - name: Set up environment
-      shell: pwsh
-      run: |
-        Write-Host "==> Cài đặt môi trường..."
-        choco install python -y
-        pip install flask
+      - name: ⚙️ Setup environment
+        run: |
+          echo "Setting up environment..."
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          cd $env:TEMP
 
-    - name: Download and extract noVNC
-      shell: pwsh
-      run: |
-        Write-Host "==> Tải noVNC..."
-        Invoke-WebRequest -Uri "https://github.com/novnc/noVNC/archive/refs/heads/master.zip" -OutFile "novnc.zip"
-        Expand-Archive novnc.zip -DestinationPath .
-        Rename-Item "noVNC-master" "novnc-master"
+      - name: 🪟 Enable RDP & create user
+        run: |
+          echo "Enabling RDP and creating user..."
+          net user runneradmin /active:yes
+          net user githubRDP Passw0rd! /add
+          net localgroup administrators githubRDP /add
+          reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f
+          netsh advfirewall firewall set rule group="Remote Desktop" new enable=yes
+          echo "✅ RDP Enabled."
 
-        Write-Host "==> Tải Websockify..."
-        Invoke-WebRequest -Uri "https://github.com/novnc/websockify/archive/refs/heads/master.zip" -OutFile "websockify.zip"
-        Expand-Archive websockify.zip -DestinationPath .
-        Rename-Item "websockify-master" "websockify"
+      - name: 🌐 Install cloudflared + serveo + ngrok
+        run: |
+          echo "Downloading tunnels..."
+          iwr -useb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe -OutFile cloudflared.exe
+          curl -s -o serveo.ps1 https://raw.githubusercontent.com/burton999dev/serveo-connect/main/serveo.ps1
+          npm install -g localtunnel >$null 2>&1
+          echo "✅ Tunnel tools installed."
 
-    - name: Download Cloudflared
-      shell: pwsh
-      run: |
-        Write-Host "==> Cài Cloudflared..."
-        Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "cloudflared.exe"
+      - name: 🚀 Start cloudflared tunnel
+        run: |
+          echo "Starting Cloudflare tunnel..."
+          Start-Process -FilePath ".\cloudflared.exe" -ArgumentList "tunnel --url rdp://localhost:3389" -WindowStyle Hidden
+          Start-Sleep -Seconds 10
+          Get-Content cloudflared.log -ErrorAction SilentlyContinue | Select-String "trycloudflare.com"
 
-    - name: Start VNC Server
-      shell: pwsh
-      run: |
-        Write-Host "==> Cài UltraVNC..."
-        Invoke-WebRequest -Uri "https://www.uvnc.com/downloads/ultravnc/157-download-ultravnc-1224.html" -OutFile "uvnc.zip"
-        # bạn có thể thay bằng tightvnc portable nếu thích
-        Write-Host "==> Khởi chạy VNC server..."
-        # Ví dụ test: chạy fake VNC port
-        New-NetFirewallRule -DisplayName "Allow VNC 5900" -Direction Inbound -Protocol TCP -LocalPort 5900 -Action Allow
+      - name: 🧠 Fallback Serveo if Cloudflare fails
+        run: |
+          echo "Trying Serveo if Cloudflare failed..."
+          if (-not (Get-Content cloudflared.log -ErrorAction SilentlyContinue | Select-String "trycloudflare.com")) {
+            echo "☁️ Cloudflare failed, using Serveo..."
+            ssh -R 3389:localhost:3389 serveo.net -o StrictHostKeyChecking=no -o ServerAliveInterval=60
+          }
 
-    - name: Start noVNC
-      shell: pwsh
-      run: |
-        Write-Host "==> Chạy noVNC server..."
-        cd novnc-master
-        Start-Process -FilePath "python" -ArgumentList "utils/novnc_proxy --vnc localhost:5900" -WindowStyle Hidden
-        Start-Sleep -Seconds 10
-        Write-Host "noVNC đã khởi động trên port 6080"
+      - name: 🖥️ Launch noVNC web viewer
+        run: |
+          echo "Installing and running noVNC..."
+          Invoke-WebRequest -Uri https://github.com/novnc/noVNC/archive/refs/heads/master.zip -OutFile novnc.zip
+          Expand-Archive novnc.zip -DestinationPath .
+          cd noVNC-master
+          Start-Process "npx" -ArgumentList "http-server -p 6080" -WindowStyle Hidden
+          echo "✅ noVNC web server started on port 6080"
 
-    - name: Start Cloudflare Tunnel
-      shell: pwsh
-      run: |
-        Write-Host "==> Khởi động Cloudflare tunnel..."
-        Start-Process -NoNewWindow "cloudflared.exe" -ArgumentList "tunnel --url http://localhost:6080 --no-autoupdate" -RedirectStandardOutput cloudflared.log -RedirectStandardError cloudflared.log
-        Start-Sleep -Seconds 15
-        $text = Get-Content cloudflared.log -Raw
-        if ($text -match "https://[^\s]+trycloudflare\.com") {
-          $link = $matches[0]
-          Write-Host "🌍 LINK TRUY CẬP noVNC WEB:"
-          Write-Host "$link/vnc.html"
-        } else {
-          Write-Host "❌ Không thể lấy link Cloudflare. Hãy kiểm tra file log."
-          Get-Content cloudflared.log | Out-String
-        }
-
-    - name: Keep alive
-      shell: pwsh
-      run: |
-        Write-Host "🔥 Giữ workflow hoạt động trong 6 tiếng..."
-        for ($i=0; $i -lt 21600; $i+=60) {
-          Write-Host "⏱️ Online... $i giây"
-          Start-Sleep -Seconds 60
-        }
+      - name: 💬 Show connection info
+        run: |
+          echo "========================================"
+          echo "✅ RDP User: githubRDP"
+          echo "✅ RDP Pass: Passw0rd!"
+          echo "✅ VNC: http://<your-public-tunnel>:6080/vnc.html"
+          echo "If Cloudflare works, find link in cloudflared.log"
+          echo "========================================"
