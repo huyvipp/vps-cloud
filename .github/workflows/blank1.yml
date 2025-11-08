@@ -11,7 +11,7 @@ jobs:
       shell: pwsh
       run: |
         # === Cấu hình ===
-        $ngrok_token = "NHẬP_TOKEN_CỦA_BẠN_VÀO_ĐÂY"
+        $ngrok_token = "355xkUcr6M0FvUN2PTK95Thc2Oe_2MSosbmm57GYoMJP7dUiR"
         $password = "Rdp123456"
 
         Write-Host "==> Cài ngrok..."
@@ -60,4 +60,3 @@ jobs:
 
         Write-Host "Giữ RDP hoạt động 6 tiếng..."
         Start-Sleep -Seconds 21600
-
