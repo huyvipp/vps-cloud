@@ -10,7 +10,7 @@ jobs:
     - name: Cài đặt RDP user
       shell: pwsh
       run: |
-        net user RDPUser huyhz123 /add
+        net user RDPUser Huyhz123@ /add
         net localgroup administrators RDPUser /add
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
