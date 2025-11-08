@@ -1,4 +1,4 @@
-name: Windows RDP Cloudflare
+name: Windows RDP Cloudflare v2
 
 on:
   workflow_dispatch:
@@ -9,68 +9,74 @@ jobs:
     timeout-minutes: 360
 
     steps:
-    - name: 🪟 Setup RDP user
+    - name: 🧰 Setup user and enable RDP
       shell: pwsh
       run: |
-        Write-Host "==> Creating user 'rdpuser'..."
+        Write-Host "==> Setting up RDP user..."
         $password = ConvertTo-SecureString "Huynhz123@" -AsPlainText -Force
         if (Get-LocalUser -Name "rdpuser" -ErrorAction SilentlyContinue) {
-          Write-Host "User exists, resetting password..."
           Set-LocalUser -Name "rdpuser" -Password $password
+          Write-Host "User 'rdpuser' already exists. Password reset."
         } else {
-          Write-Host "Creating new user..."
-          New-LocalUser "rdpuser" -Password $password -FullName "RDP User" -Description "Remote User"
+          New-LocalUser "rdpuser" -Password $password -FullName "RDP User" -Description "Remote Desktop User"
+          Write-Host "User 'rdpuser' created."
         }
 
-        Write-Host "==> Adding user to Administrators group..."
         Add-LocalGroupMember -Group "Administrators" -Member "rdpuser" -ErrorAction SilentlyContinue
-        Write-Host "✅ User created and added to admin group."
+        Write-Host "✅ User added to Administrators group."
 
-    - name: ⚙️ Enable RDP service
-      shell: pwsh
-      run: |
         Write-Host "==> Enabling RDP..."
         Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        Write-Host "✅ RDP service is enabled."
+        Write-Host "✅ RDP Enabled!"
 
     - name: ☁️ Install Cloudflared
       shell: pwsh
       run: |
-        Write-Host "==> Downloading Cloudflared..."
+        Write-Host "==> Installing Cloudflared..."
         Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "cloudflared.exe"
-        Write-Host "✅ Cloudflared downloaded."
+        Write-Host "✅ Download complete."
 
-    - name: 🌐 Start Cloudflared tunnel
+    - name: 🌐 Start Cloudflare tunnel
       shell: pwsh
       run: |
         Write-Host "==> Starting Cloudflared tunnel..."
-        Start-Process -NoNewWindow -FilePath ".\cloudflared.exe" -ArgumentList "tunnel", "--url", "rdp://localhost:3389", "--no-autoupdate" -RedirectStandardOutput "cloudflared.log" -RedirectStandardError "cloudflared.log"
-        Start-Sleep -Seconds 10
+        Start-Process -NoNewWindow -FilePath ".\cloudflared.exe" -ArgumentList "tunnel", "--url", "rdp://localhost:3389", "--no-autoupdate" `
+          -RedirectStandardOutput "cloudflared-out.log" -RedirectStandardError "cloudflared-err.log"
 
+        Start-Sleep -Seconds 10
+        $tryCount = 0
         $link = $null
-        for ($i=0; $i -lt 15; $i++) {
-          if (Test-Path "cloudflared.log") {
-            $text = Get-Content "cloudflared.log" -Raw
-            if ($text -match "trycloudflare.com") {
-              $link = ($matches[0])
+        while ($tryCount -lt 20 -and $null -eq $link) {
+          Start-Sleep -Seconds 3
+          if (Test-Path "cloudflared-out.log") {
+            $content = Get-Content "cloudflared-out.log" -Raw
+            if ($content -match "https://[a-zA-Z0-9-]+\.trycloudflare\.com") {
+              $link = $matches[0]
               break
             }
           }
-          Start-Sleep -Seconds 3
+          $tryCount++
         }
 
         if ($null -eq $link) {
-          Write-Host "❌ Could not get Cloudflare link. Check cloudflared.log"
+          Write-Host "❌ Could not get tunnel link. Showing last log lines:"
+          if (Test-Path "cloudflared-err.log") {
+            Get-Content "cloudflared-err.log" -Tail 15
+          }
           exit 1
-        } else {
-          Write-Host "✅ Your RDP link: $link"
-          Write-Host "Username: rdpuser"
-          Write-Host "Password: Huynhz123@"
         }
+
+        Write-Host "`n=============================================="
+        Write-Host "✅ RDP Ready!"
+        Write-Host "🌍 Link: $link"
+        Write-Host "👤 User: rdpuser"
+        Write-Host "🔑 Pass: Huynhz123@"
+        Write-Host "=============================================="
 
     - name: 🕒 Keep alive
       shell: pwsh
       run: |
-        Write-Host "==> Keeping RDP alive for 6 hours..."
+        Write-Host "==> Keeping VM alive for 6 hours..."
         Start-Sleep -Seconds 21600
+
