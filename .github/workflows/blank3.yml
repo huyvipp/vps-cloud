@@ -18,14 +18,16 @@ jobs:
         reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
         Write-Host "✅ User rdpuser tạo xong."
-
-    - name: Cài đặt LocalTunnel
-      shell: pwsh
-      run: |
-        Write-Host "==> Cài Node.js và LocalTunnel..."
-        npm install -g localtunnel
-        Write-Host "✅ LocalTunnel đã sẵn sàng."
-
+- name: Cài NodeJS
+  uses: actions/setup-node@v3
+  with:
+    node-version: '18'
+- name: Cài và chạy LocalTunnel
+  run: |
+    npm install -g localtunnel
+    lt --port 3389 > tunnel.log 2>&1 &
+    timeout /t 5
+    type tunnel.log
     - name: Chạy LocalTunnel để mở cổng RDP
       shell: pwsh
       run: |
