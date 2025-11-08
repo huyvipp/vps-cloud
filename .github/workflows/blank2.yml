@@ -1,4 +1,4 @@
-name: Windows Cloudflare RDP
+name: Windows Cloudflare RDP (Stable)
 
 on:
   workflow_dispatch:
@@ -6,55 +6,52 @@ on:
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 360
+    timeout-minutes: 9999
 
     steps:
-    - name: Setup RDP User
+    - name: 🔧 Setup User
       run: |
-        Write-Host "==> Creating user and enabling RDP..."
-        net user runneradmin Password123! /add
+        Write-Host "==> Setting up RDP user..."
+        net user runneradmin Huyhz123@ /add
         net localgroup administrators runneradmin /add
-        reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f
-        netsh advfirewall firewall set rule group="remote desktop" new enable=yes
-        Write-Host "✅ RDP enabled with user: runneradmin / Password123!"
+        net localgroup "Remote Desktop Users" runneradmin /add
+        Write-Host "✅ User created successfully!"
 
-    - name: Download Cloudflared
+    - name: ⚙️ Enable RDP
       run: |
-        Invoke-WebRequest -Uri https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe -OutFile cloudflared.exe
-        Write-Host "✅ Cloudflared downloaded."
+        Write-Host "==> Enabling RDP..."
+        Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        Write-Host "✅ RDP Enabled!"
 
-    - name: Start Cloudflared Tunnel
-      shell: pwsh
+    - name: 📦 Download Cloudflared
       run: |
-        Write-Host "==> Starting Cloudflared tunnel..."
-        $proc = Start-Process -FilePath ".\cloudflared.exe" `
-          -ArgumentList "tunnel --url http://localhost:3389" `
-          -NoNewWindow -PassThru `
-          -RedirectStandardOutput ".\cloudflared_log.txt" `
-          -RedirectStandardError ".\cloudflared_err.txt"
+        Write-Host "==> Downloading Cloudflared..."
+        Invoke-WebRequest https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe -OutFile cloudflared.exe
+        Write-Host "✅ Cloudflared downloaded!"
 
-        # Wait for the tunnel URL to appear
-        $success = $false
-        for ($i=0; $i -lt 40; $i++) {
-          Start-Sleep -Seconds 3
-          if (Test-Path ".\cloudflared_log.txt") {
-            $log = Get-Content ".\cloudflared_log.txt" -Raw
-            if ($log -match "https://[-a-z0-9]+\.trycloudflare\.com") {
-              $url = ($matches[0])
-              Write-Host "`n✅ RDP Tunnel ready at: $url"
-              $success = $true
-              break
-            }
-          }
+    - name: 🌐 Start Cloudflare Tunnel
+      run: |
+        Write-Host "==> Starting Cloudflare tunnel..."
+        $env:CLOUDFLARED_NO_AUTUPDATE = "true"
+        $proc = Start-Process -FilePath ".\cloudflared.exe" -ArgumentList "tunnel", "--url", "rdp://localhost:3389", "--metrics", "localhost:8080" -PassThru -RedirectStandardOutput ".\cloudflared_out.log" -RedirectStandardError ".\cloudflared_err.log"
+        Start-Sleep -Seconds 10
+        $output = Get-Content .\cloudflared_out.log -Raw
+        if ($output -match "https://[-a-zA-Z0-9.]+trycloudflare.com") {
+          $url = $matches[0]
+          Write-Host "✅ Tunnel started successfully!"
+          Write-Host "🌍 Your RDP Link: $url"
+          Write-Host "🪪 Username: runneradmin"
+          Write-Host "🔑 Password: Huyhz123@"
+        } else {
+          Write-Host "❌ Cloudflare tunnel failed to start. Logs below:"
+          Get-Content .\cloudflared_err.log
+          exit 1
         }
 
-        if (-not $success) {
-          Write-Host "❌ Cloudflared failed to start. Showing log:"
-          Get-Content ".\cloudflared_err.txt" -ErrorAction SilentlyContinue
-          throw "Cloudflared failed to start or no URL received."
-        }
-
-    - name: Keep alive
+    - name: 🕒 Keep Session Alive
       run: |
-        Write-Host "🔄 Keeping session alive for 6 hours..."
-        Start-Sleep -Seconds 21600
+        Write-Host "==> Keeping RDP session alive..."
+        while ($true) {
+          Start-Sleep -Seconds 600
+        }
