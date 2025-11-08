@@ -1,33 +1,103 @@
-name: Free Windows RDP via Cloudflare
-on: workflow_dispatch
+name: Windows RDP via Cloudflared (Robust)
+
+on:
+  workflow_dispatch:
 
 jobs:
-  build:
+  rdp-cloudflared:
     runs-on: windows-latest
     timeout-minutes: 360
 
     steps:
-    - name: Cài đặt RDP user
+    - name: Prepare / info
+      run: echo "Starting Windows RDP via Cloudflared..."
+
+    - name: Create RDP user & enable RDP
       shell: pwsh
       run: |
-        net user RDPUser Huyhz123@ /add
-        net localgroup administrators RDPUser /add
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+        $pass = "Huyhz@123"   # <-- đổi mật khẩu ở đây nếu muốn
+        Write-Host "==> Creating or updating user 'rdpuser'..."
+        if (Get-LocalUser -Name rdpuser -ErrorAction SilentlyContinue) {
+          Write-Host "User exists - resetting password..."
+          Set-LocalUser -Name "rdpuser" -Password (ConvertTo-SecureString $pass -AsPlainText -Force)
+        } else {
+          New-LocalUser -Name "rdpuser" -Password (ConvertTo-SecureString $pass -AsPlainText -Force) -FullName "RDP User" -Description "Temporary RDP user"
+        }
+        Add-LocalGroupMember -Group "Administrators" -Member "rdpuser" -ErrorAction SilentlyContinue
+        Write-Host "==> Enabling Remote Desktop..."
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections' -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        Write-Host "✅ RDP user ready. Username: rdpuser  Password: $pass"
 
-    - name: Cài đặt Cloudflared
+    - name: Download cloudflared
+      shell: pwsh
       run: |
-        Invoke-WebRequest https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe -OutFile cloudflared.exe
+        $url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+        Write-Host "Downloading cloudflared from $url"
+        Invoke-WebRequest -Uri $url -OutFile cloudflared.exe
+        Get-Item cloudflared.exe | Select-Object Name, Length
 
-    - name: Tạo tunnel RDP
+    - name: Start cloudflared tunnel and wait for link
+      shell: pwsh
       run: |
-        Start-Process -FilePath ".\cloudflared.exe" -ArgumentList "tunnel", "--url", "tcp://localhost:3389" -NoNewWindow
-        Start-Sleep -Seconds 10
-        Invoke-WebRequest -Uri http://127.0.0.1:4040/api/tunnels -OutFile tunnel.json
+        Write-Host "==> Starting cloudflared tunnel (tcp -> localhost:3389)..."
+        $log = Join-Path $env:RUNNER_TEMP "cloudflared_out.txt"
+        if (Test-Path $log) { Remove-Item $log -Force }
+        # start cloudflared, redirect stdout/stderr to file
+        $proc = Start-Process -FilePath ".\cloudflared.exe" `
+          -ArgumentList "tunnel","--url","tcp://localhost:3389","--no-autoupdate" `
+          -RedirectStandardOutput $log -RedirectStandardError $log -NoNewWindow -PassThru
 
-    - name: Hiển thị thông tin
+        Write-Host "Started cloudflared PID=$($proc.Id). Waiting for public endpoint..."
+        # Wait up to ~300s (60 * 5s) for the tunnel line to appear
+        $link = $null
+        $attempt = 0
+        while (-not $link -and $attempt -lt 60) {
+          Start-Sleep -Seconds 5
+          if (Test-Path $log) {
+            $text = Get-Content $log -Raw -ErrorAction SilentlyContinue
+            # cloudflared prints TCP endpoint lines like: "trycloudflare.com:xxxxx" or "tcp://trycloudflare.com:xxxxx"
+            if ($text -match "tcp://[^\s`""]+") { $link = $matches[0]; break }
+            if ($text -match "https?://[-a-z0-9]+\.trycloudflare\.com(:\d+)?") { $link = $matches[0]; break }
+            if ($text -match "[-a-z0-9]+\.trycloudflare\.com:\d+") { $link = $matches[0]; break }
+          }
+          $attempt++
+          Write-Host "Waiting for cloudflared... attempt $attempt/60"
+        }
+
+        if ($link) {
+          # normalize link to host:port for RDP client
+          if ($link -match "^tcp://([^:]+):(\d+)") {
+            $host = $matches[1]; $port = $matches[2]
+          } elseif ($link -match "^https?://([^:/]+)(?::(\d+))?") {
+            $host = $matches[1]; $port = $matches[2]
+            if (-not $port) { $port = 443 } # fallback
+          } elseif ($link -match "^([^:]+):(\d+)$") {
+            $host = $matches[1]; $port = $matches[2]
+          } else {
+            $host = $link; $port = 3389
+          }
+
+          Write-Host ""
+          Write-Host "✅ CLOUD FLARE TUNNEL READY"
+          Write-Host "Public endpoint (for RDP client): $host`:$port"
+          Write-Host "Username: rdpuser"
+          Write-Host "Password: Huyhz@123"
+          Write-Host ""
+          # print a helpful MSTSC command example
+          Write-Host "Example (Windows): mstsc /v:$host`:$port"
+        } else {
+          Write-Host "❌ Could not detect cloudflared public endpoint in log after waiting."
+          Write-Host "---- Last 200 bytes of cloudflared stdout ----"
+          if (Test-Path $log) { Get-Content $log -Tail 200 } else { Write-Host "(no log file found)" }
+          throw "cloudflared tunnel not available - try rerunning job."
+        }
+
+    - name: Keep runner alive (6 hours)
+      shell: pwsh
       run: |
-        Get-Content tunnel.json
-
-    - name: Giữ máy hoạt động
-      run: ping -n 21600 127.0.0.1 >nul
+        Write-Host "Keeping the runner alive for up to 6 hours. Stop early to free runner."
+        for ($i = 0; $i -lt 360; $i++) {
+          Start-Sleep -Seconds 60
+          if ($i % 10 -eq 0) { Write-Host "Alive: $i minutes" }
+        }
