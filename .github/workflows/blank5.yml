@@ -1,4 +1,4 @@
-name: Windows WebVNC (Browser Access)
+name: Windows VNC via Cloudflare
 
 on:
   workflow_dispatch:
@@ -9,47 +9,72 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: 🧱 Enable RDP + GUI
-        run: |
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          $password = ConvertTo-SecureString "Huyhz123@" -AsPlainText -Force
-          Set-LocalUser -Name "runneradmin" -Password $password
+    - name: Set up environment
+      shell: pwsh
+      run: |
+        Write-Host "==> Cài đặt môi trường..."
+        choco install python -y
+        pip install flask
 
-      - name: 🧰 Install noVNC and Websockify
-        run: |
-          Invoke-WebRequest -Uri "https://github.com/novnc/noVNC/archive/refs/heads/master.zip" -OutFile "novnc.zip"
-          Expand-Archive -Path "novnc.zip" -DestinationPath ".\novnc"
-          Invoke-WebRequest -Uri "https://github.com/novnc/websockify/archive/refs/heads/master.zip" -OutFile "websockify.zip"
-          Expand-Archive -Path "websockify.zip" -DestinationPath ".\websockify"
-          echo "✅ noVNC Installed"
+    - name: Download and extract noVNC
+      shell: pwsh
+      run: |
+        Write-Host "==> Tải noVNC..."
+        Invoke-WebRequest -Uri "https://github.com/novnc/noVNC/archive/refs/heads/master.zip" -OutFile "novnc.zip"
+        Expand-Archive novnc.zip -DestinationPath .
+        Rename-Item "noVNC-master" "novnc-master"
 
-      - name: 🧠 Install TightVNC (VNC backend)
-        run: |
-          Invoke-WebRequest -Uri "https://www.tightvnc.com/download/2.8.75/tightvnc-2.8.75-gpl-setup-64bit.msi" -OutFile "tightvnc.msi"
-          Start-Process msiexec.exe -Wait -ArgumentList '/i tightvnc.msi /quiet /norestart'
-          Start-Process "C:\Program Files\TightVNC\tvnserver.exe" -ArgumentList "-run"
-          Start-Sleep -Seconds 15
+        Write-Host "==> Tải Websockify..."
+        Invoke-WebRequest -Uri "https://github.com/novnc/websockify/archive/refs/heads/master.zip" -OutFile "websockify.zip"
+        Expand-Archive websockify.zip -DestinationPath .
+        Rename-Item "websockify-master" "websockify"
 
-      - name: ⚡ Start Websockify proxy for noVNC
-        run: |
-          cd novnc-master
-          Start-Process "C:\Python39\python.exe" -ArgumentList "..\websockify-master\websockify.py 6080 localhost:5900" -WindowStyle Hidden
-          Start-Sleep -Seconds 10
+    - name: Download Cloudflared
+      shell: pwsh
+      run: |
+        Write-Host "==> Cài Cloudflared..."
+        Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "cloudflared.exe"
 
-      - name: ☁️ Download Cloudflared
-        run: |
-          Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "cloudflared.exe"
+    - name: Start VNC Server
+      shell: pwsh
+      run: |
+        Write-Host "==> Cài UltraVNC..."
+        Invoke-WebRequest -Uri "https://www.uvnc.com/downloads/ultravnc/157-download-ultravnc-1224.html" -OutFile "uvnc.zip"
+        # bạn có thể thay bằng tightvnc portable nếu thích
+        Write-Host "==> Khởi chạy VNC server..."
+        # Ví dụ test: chạy fake VNC port
+        New-NetFirewallRule -DisplayName "Allow VNC 5900" -Direction Inbound -Protocol TCP -LocalPort 5900 -Action Allow
 
-      - name: 🌐 Create Cloudflare Tunnel (Web)
-        run: |
-          Start-Process -FilePath ".\cloudflared.exe" -ArgumentList "tunnel --url http://localhost:6080 --no-autoupdate" -WindowStyle Hidden
-          Start-Sleep -Seconds 15
+    - name: Start noVNC
+      shell: pwsh
+      run: |
+        Write-Host "==> Chạy noVNC server..."
+        cd novnc-master
+        Start-Process -FilePath "python" -ArgumentList "utils/novnc_proxy --vnc localhost:5900" -WindowStyle Hidden
+        Start-Sleep -Seconds 10
+        Write-Host "noVNC đã khởi động trên port 6080"
 
-      - name: 🔍 Show WebVNC URL
-        run: |
-          echo "🔗 Mở link bên dưới để truy cập Windows GUI qua web:"
-          Get-Content cloudflared.log -ErrorAction SilentlyContinue | Select-String "trycloudflare.com"
+    - name: Start Cloudflare Tunnel
+      shell: pwsh
+      run: |
+        Write-Host "==> Khởi động Cloudflare tunnel..."
+        Start-Process -NoNewWindow "cloudflared.exe" -ArgumentList "tunnel --url http://localhost:6080 --no-autoupdate" -RedirectStandardOutput cloudflared.log -RedirectStandardError cloudflared.log
+        Start-Sleep -Seconds 15
+        $text = Get-Content cloudflared.log -Raw
+        if ($text -match "https://[^\s]+trycloudflare\.com") {
+          $link = $matches[0]
+          Write-Host "🌍 LINK TRUY CẬP noVNC WEB:"
+          Write-Host "$link/vnc.html"
+        } else {
+          Write-Host "❌ Không thể lấy link Cloudflare. Hãy kiểm tra file log."
+          Get-Content cloudflared.log | Out-String
+        }
 
-      - name: 🕒 Keep session alive
-        run: ping -t 127.0.0.1
+    - name: Keep alive
+      shell: pwsh
+      run: |
+        Write-Host "🔥 Giữ workflow hoạt động trong 6 tiếng..."
+        for ($i=0; $i -lt 21600; $i+=60) {
+          Write-Host "⏱️ Online... $i giây"
+          Start-Sleep -Seconds 60
+        }
