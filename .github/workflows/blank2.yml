@@ -1,4 +1,4 @@
-name: Windows Cloudflared Tunnel (v4 Stable)
+name: Windows Cloudflared Tunnel (V5 Fixed)
 
 on:
   workflow_dispatch:
@@ -9,7 +9,7 @@ jobs:
     timeout-minutes: 360
 
     steps:
-    - name: Allow PowerShell scripts
+    - name: Setup PowerShell
       shell: pwsh
       run: |
         Set-ExecutionPolicy Bypass -Scope Process -Force
@@ -19,55 +19,56 @@ jobs:
       run: |
         $url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
         Invoke-WebRequest -Uri $url -OutFile "cloudflared.exe"
-        Write-Host "✅ Cloudflared downloaded successfully."
+        Write-Host "✅ Cloudflared downloaded."
 
-    - name: Start Cloudflare tunnel
+    - name: Start Cloudflared tunnel
       shell: pwsh
       run: |
         Write-Host "==> Starting Cloudflared tunnel..."
-        $logFile = "$env:RUNNER_TEMP\cloudflared_full.log"
 
-        # Chạy Cloudflared trong background, merge stdout + stderr
+        $stdout = "$env:RUNNER_TEMP\cloudflared_out.log"
+        $stderr = "$env:RUNNER_TEMP\cloudflared_err.log"
+
+        # Chạy Cloudflared, ghi ra hai file log riêng biệt
         $proc = Start-Process -FilePath ".\cloudflared.exe" `
-            -ArgumentList "tunnel", "--url", "rdp://localhost:8080", "--no-autoupdate" `
-            -RedirectStandardOutput $logFile `
-            -RedirectStandardError $logFile `
+            -ArgumentList "tunnel", "--url", "http://localhost:8080", "--no-autoupdate" `
+            -RedirectStandardOutput $stdout `
+            -RedirectStandardError $stderr `
             -PassThru
 
-        Write-Host "Cloudflared started with PID $($proc.Id), waiting for URL..."
+        Write-Host "Cloudflared started with PID $($proc.Id). Waiting for URL..."
 
         $url = $null
         $timeout = (Get-Date).AddSeconds(60)
+
         while ((Get-Date) -lt $timeout -and -not $url) {
             Start-Sleep -Seconds 3
-            if (Test-Path $logFile) {
-                $lines = Get-Content $logFile -Tail 20 -ErrorAction SilentlyContinue
-                foreach ($line in $lines) {
-                    if ($line -match "https://[-a-z0-9]+\.trycloudflare\.com") {
-                        $url = $matches[0]
-                        break
-                    }
+            $lines = @()
+            if (Test-Path $stdout) { $lines += Get-Content $stdout -Tail 20 -ErrorAction SilentlyContinue }
+            if (Test-Path $stderr) { $lines += Get-Content $stderr -Tail 20 -ErrorAction SilentlyContinue }
+
+            foreach ($line in $lines) {
+                if ($line -match "https://[-a-z0-9]+\.trycloudflare\.com") {
+                    $url = $matches[0]
+                    break
                 }
             }
         }
 
         if (-not $url) {
-            Write-Host "❌ No tunnel URL found in logs. Dumping last log lines:"
-            Get-Content $logFile -Tail 30
+            Write-Host "❌ No Cloudflare URL found."
+            Write-Host "=== STDOUT ==="
+            if (Test-Path $stdout) { Get-Content $stdout -Tail 30 }
+            Write-Host "=== STDERR ==="
+            if (Test-Path $stderr) { Get-Content $stderr -Tail 30 }
             throw "Cloudflared failed to start or no URL received."
         }
 
-        Write-Host "✅ Tunnel established!"
-        Write-Host "::notice::Your public URL: $url"
-        Write-Host "🌐 Access via: $url"
+        Write-Host "✅ Tunnel established successfully!"
+        Write-Host "::notice::Your Cloudflare Tunnel URL: $url"
+        Write-Host "🌐 Access: $url"
 
         # Giữ kết nối sống 6 tiếng
-        while (-not $proc.HasExited) {
-            Start-Sleep -Seconds 60
-        }
-
-        # giữ tiến trình chạy 6h
-        Write-Host "Keeping Cloudflared alive..."
         while (-not $proc.HasExited) {
             Start-Sleep -Seconds 60
         }
