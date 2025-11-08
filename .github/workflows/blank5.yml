@@ -14,11 +14,11 @@ jobs:
 
       - name: 🧠 Enable RDP & Set password
         run: |
-          net user runneradmin P@ssw0rd123
+          net user runneradmin Huyhz123@
           net localgroup administrators runneradmin /add
           Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          Write-Host "✅ RDP Enabled with password: P@ssw0rd123"
+          Write-Host "✅ RDP Enabled with password: Huyhz123@"
 
       - name: 🖥️ Download & Setup noVNC
         run: |
