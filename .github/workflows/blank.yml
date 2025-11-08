@@ -26,7 +26,7 @@ jobs:
             $user = Get-LocalUser -Name "rdpuser"
             $user | Set-LocalUser -Password $securePass
           } else {
-            New-LocalUser -Name "rdpuser" -Password $securePass -FullName "RDP User" -Description "Temporary RDP user from GitHub Actions" -PasswordNeverExpires $true
+           New-LocalUser -Name "rdpuser" -Password $securePass -FullName "RDP User" -Description "Temporary RDP user from GitHub Actions"
             Write-Host "User created."
           }
           # Add to administrators for convenience (optional). You can choose Remote Desktop Users group instead.
