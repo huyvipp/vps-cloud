@@ -1,7 +1,5 @@
-name: Windows RDP via Cloudflared (Final Fix)
-
-on:
-  workflow_dispatch:
+name: Free Windows RDP via Cloudflare
+on: workflow_dispatch
 
 jobs:
   build:
@@ -9,59 +7,27 @@ jobs:
     timeout-minutes: 360
 
     steps:
-    - name: Thiết lập user RDP
+    - name: Cài đặt RDP user
       shell: pwsh
       run: |
-        Write-Host "==> Đang tạo user RDP..."
-        net user rdpuser Huyhz@123 /add
-        net localgroup administrators rdpuser /add
-        reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f
+        net user RDPUser huyhz123 /add
+        net localgroup administrators RDPUser /add
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        Write-Host "✅ User 'rdpuser' đã sẵn sàng!"
 
     - name: Cài đặt Cloudflared
-      shell: pwsh
       run: |
-        Write-Host "==> Đang tải Cloudflared..."
-        Invoke-WebRequest -Uri https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe -OutFile cloudflared.exe
-        Write-Host "✅ Cloudflared tải xong!"
+        Invoke-WebRequest https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe -OutFile cloudflared.exe
 
-    - name: Khởi chạy Cloudflared tunnel & lấy link
-      shell: pwsh
+    - name: Tạo tunnel RDP
       run: |
-        Write-Host "==> Đang khởi chạy Cloudflared tunnel tới RDP..."
-        $p = Start-Process -FilePath ".\cloudflared.exe" -ArgumentList "tunnel", "--url", "rdp://localhost:3389" -RedirectStandardOutput "cloudflared_out.txt" -PassThru
-        Write-Host "⏳ Đợi 20 giây để tunnel khởi tạo..."
-        Start-Sleep -Seconds 20
+        Start-Process -FilePath ".\cloudflared.exe" -ArgumentList "tunnel", "--url", "tcp://localhost:3389" -NoNewWindow
+        Start-Sleep -Seconds 10
+        Invoke-WebRequest -Uri http://127.0.0.1:4040/api/tunnels -OutFile tunnel.json
 
-        # Đọc real-time output để tìm link
-        $link = $null
-        $tries = 0
-        while (-not $link -and $tries -lt 60) {
-          if (Test-Path "cloudflared_out.txt") {
-            $lines = Get-Content "cloudflared_out.txt" -Raw
-            if ($lines -match "https://[-a-z0-9]+\.trycloudflare\.com") {
-              $link = $matches[0]
-              break
-            }
-          }
-          Start-Sleep -Seconds 2
-          $tries++
-        }
-
-        if ($link) {
-          Write-Host ""
-          Write-Host "✅ ✅ ✅  KẾT NỐI RDP THÀNH CÔNG  ✅ ✅ ✅"
-          Write-Host "🔗 LINK: $link"
-          Write-Host "👤 USER: rdpuser"
-          Write-Host "🔑 PASS: Huyhz@123"
-        } else {
-          Write-Host "❌ Không thể lấy link Cloudflare. Có thể Cloudflared chưa tạo tunnel."
-          Write-Host "Thử chạy lại job hoặc kiểm tra output cloudflared_out.txt."
-        }
-
-    - name: Giữ RDP hoạt động 6 tiếng
-      shell: pwsh
+    - name: Hiển thị thông tin
       run: |
-        Write-Host "==> Giữ phiên RDP trong 6 tiếng..."
-        Start-Sleep -Seconds 21600
+        Get-Content tunnel.json
+
+    - name: Giữ máy hoạt động
+      run: ping -n 21600 127.0.0.1 >nul
