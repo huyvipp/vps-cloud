@@ -1,4 +1,4 @@
-name: Windows Cloudflared Tunnel (v3 Fixed)
+name: Windows Cloudflared Tunnel (v4 Stable)
 
 on:
   workflow_dispatch:
@@ -9,67 +9,62 @@ jobs:
     timeout-minutes: 360
 
     steps:
-    - name: Set execution policy
+    - name: Allow PowerShell scripts
       shell: pwsh
       run: |
         Set-ExecutionPolicy Bypass -Scope Process -Force
-        Write-Host "Execution policy set to Bypass."
 
-    - name: Download cloudflared
+    - name: Download Cloudflared
       shell: pwsh
       run: |
-        Write-Host "==> Downloading Cloudflared..."
         $url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
         Invoke-WebRequest -Uri $url -OutFile "cloudflared.exe"
-        Write-Host "Cloudflared downloaded successfully."
+        Write-Host "✅ Cloudflared downloaded successfully."
 
-    - name: Start Cloudflared tunnel
+    - name: Start Cloudflare tunnel
       shell: pwsh
       run: |
         Write-Host "==> Starting Cloudflared tunnel..."
-        $stdOut = Join-Path $env:RUNNER_TEMP "cf_stdout.log"
-        $stdErr = Join-Path $env:RUNNER_TEMP "cf_stderr.log"
+        $logFile = "$env:RUNNER_TEMP\cloudflared_full.log"
 
-        # bảo đảm file khác nhau
-        if (Test-Path $stdOut) { Remove-Item $stdOut -Force }
-        if (Test-Path $stdErr) { Remove-Item $stdErr -Force }
+        # Chạy Cloudflared trong background, merge stdout + stderr
+        $proc = Start-Process -FilePath ".\cloudflared.exe" `
+            -ArgumentList "tunnel", "--url", "rdp://localhost:8080", "--no-autoupdate" `
+            -RedirectStandardOutput $logFile `
+            -RedirectStandardError $logFile `
+            -PassThru
 
-        $psi = New-Object System.Diagnostics.ProcessStartInfo
-        $psi.FileName = ".\cloudflared.exe"
-        $psi.Arguments = "tunnel --url http://localhost:8080 --no-autoupdate"
-        $psi.RedirectStandardOutput = $true
-        $psi.RedirectStandardError  = $true
-        $psi.UseShellExecute = $false
-        $psi.CreateNoWindow = $true
-
-        $proc = [System.Diagnostics.Process]::Start($psi)
-        Write-Host "Cloudflared started with PID $($proc.Id). Waiting for URL..."
+        Write-Host "Cloudflared started with PID $($proc.Id), waiting for URL..."
 
         $url = $null
-        $timeout = [DateTime]::Now.AddSeconds(60)
-        while (([DateTime]::Now -lt $timeout) -and (-not $url)) {
+        $timeout = (Get-Date).AddSeconds(60)
+        while ((Get-Date) -lt $timeout -and -not $url) {
             Start-Sleep -Seconds 3
-            try {
-                $lines = Get-Content -Path $stdOut -ErrorAction SilentlyContinue
-                foreach ($l in $lines) {
-                    if ($l -match "https?://[-a-z0-9]+\.trycloudflare\.com") {
+            if (Test-Path $logFile) {
+                $lines = Get-Content $logFile -Tail 20 -ErrorAction SilentlyContinue
+                foreach ($line in $lines) {
+                    if ($line -match "https://[-a-z0-9]+\.trycloudflare\.com") {
                         $url = $matches[0]
                         break
                     }
                 }
-            } catch {}
+            }
         }
 
         if (-not $url) {
-            Write-Host "❌ No tunnel URL found in logs."
-            Write-Host "Cloudflared stderr (last 20 lines):"
-            if (Test-Path $stdErr) { Get-Content $stdErr -Tail 20 }
+            Write-Host "❌ No tunnel URL found in logs. Dumping last log lines:"
+            Get-Content $logFile -Tail 30
             throw "Cloudflared failed to start or no URL received."
         }
 
-        Write-Host "✅ Tunnel ready! Access URL:"
-        Write-Host "   $url"
-        Write-Host "::notice::Cloudflared tunnel: $url"
+        Write-Host "✅ Tunnel established!"
+        Write-Host "::notice::Your public URL: $url"
+        Write-Host "🌐 Access via: $url"
+
+        # Giữ kết nối sống 6 tiếng
+        while (-not $proc.HasExited) {
+            Start-Sleep -Seconds 60
+        }
 
         # giữ tiến trình chạy 6h
         Write-Host "Keeping Cloudflared alive..."
