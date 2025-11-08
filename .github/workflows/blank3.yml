@@ -1,0 +1,66 @@
+name: Free Windows RDP via LocalTunnel
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+    - name: Tạo user RDP
+      shell: pwsh
+      run: |
+        Write-Host "==> Tạo user RDP..."
+        net user rdpuser Huyhz@123 /add
+        net localgroup administrators rdpuser /add
+        reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        Write-Host "✅ User rdpuser tạo xong."
+
+    - name: Cài đặt LocalTunnel
+      shell: pwsh
+      run: |
+        Write-Host "==> Cài Node.js và LocalTunnel..."
+        npm install -g localtunnel
+        Write-Host "✅ LocalTunnel đã sẵn sàng."
+
+    - name: Chạy LocalTunnel để mở cổng RDP
+      shell: pwsh
+      run: |
+        Write-Host "==> Đang khởi chạy LocalTunnel tới cổng 3389..."
+        Start-Process -FilePath "lt" -ArgumentList "--port", "3389" -RedirectStandardOutput "lt_log.txt" -NoNewWindow
+        Start-Sleep -Seconds 10
+
+        # Đọc link public
+        $tries = 0
+        $link = $null
+        while (-not $link -and $tries -lt 30) {
+          if (Test-Path "lt_log.txt") {
+            $log = Get-Content "lt_log.txt" -Raw
+            if ($log -match "https://[-a-z0-9]+\.loca\.lt") {
+              $link = $matches[0]
+              break
+            }
+          }
+          Start-Sleep -Seconds 2
+          $tries++
+        }
+
+        if ($link) {
+          Write-Host ""
+          Write-Host "✅ ✅ ✅  KẾT NỐI THÀNH CÔNG  ✅ ✅ ✅"
+          Write-Host "🌐 LINK: $link"
+          Write-Host "👤 USER: rdpuser"
+          Write-Host "🔑 PASS: Huyhz@123"
+          Write-Host "⚠️ Dùng link này để tạo kết nối proxy tới RDP (TCP 3389)."
+        } else {
+          Write-Host "❌ Không thể lấy link LocalTunnel, có thể server đang quá tải."
+        }
+
+    - name: Giữ RDP hoạt động 6 tiếng
+      shell: pwsh
+      run: |
+        Write-Host "==> Giữ RDP hoạt động trong 6 tiếng..."
+        Start-Sleep -Seconds 21600
