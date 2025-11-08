@@ -1,0 +1,35 @@
+name: Windows RDP via Cloudflared (Free No Card)
+
+on: 
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+    - name: Setup RDP user
+      shell: pwsh
+      run: |
+        Write-Host "Tạo user 'rdpuser'..."
+        net user rdpuser Huyhz@123 /add
+        net localgroup administrators rdpuser /add
+        reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+
+    - name: Cài Cloudflared
+      run: |
+        Invoke-WebRequest -Uri https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe -OutFile cloudflared.exe
+
+    - name: Mở Tunnel qua Cloudflare
+      run: |
+        Start-Process -NoNewWindow -FilePath ".\cloudflared.exe" -ArgumentList "tunnel", "--url", "rdp://localhost:3389"
+        Start-Sleep -Seconds 10
+        Invoke-WebRequest -Uri http://127.0.0.1:4040/api/tunnels -OutFile tunnels.json -ErrorAction SilentlyContinue
+
+    - name: Giữ cho máy hoạt động
+      shell: pwsh
+      run: |
+        Write-Host "Máy đang hoạt động trong 6 giờ..."
+        Start-Sleep -Seconds 21600
