@@ -4,58 +4,99 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  windows-rdp:
     runs-on: windows-latest
-    steps:
-      - name: Show start
-        run: echo "Starting Windows RDP setup..."
+    timeout-minutes: 360
 
-      - name: Configure RDP user & enable RDP
-        shell: pwsh
-        env:
-          RDP_PASSWORD: ${{ 'Huyhz123@' }}
-        run: |
+    steps:
+    - name: 🧰 Set up job
+      run: |
+        Write-Host "🚀 Starting Windows RDP Setup..."
+
+    - name: 🔑 Configure RDP user & enable RDP
+      shell: pwsh
+      env:
+        RDP_PASSWORD: 'Huynh@123'
+      run: |
+        try {
           Write-Host "Creating local user 'rdpuser'..."
           $securePass = ConvertTo-SecureString $env:RDP_PASSWORD -AsPlainText -Force
           if (Get-LocalUser -Name "rdpuser" -ErrorAction SilentlyContinue) {
               Write-Host "User exists, resetting password..."
-              Set-LocalUser -Name "rdpuser" -Password $securePass
+              $user = Get-LocalUser -Name "rdpuser"
+              $user | Set-LocalUser -Password $securePass
           } else {
-              Write-Host "Creating new user..."
-              New-LocalUser -Name "rdpuser" -Password $securePass -FullName "RDP User" -Description "User for RDP access"
+              New-LocalUser "rdpuser" -Password $securePass -FullName "RDP User" -Description "RDP User account"
           }
 
           Add-LocalGroupMember -Group "Administrators" -Member "rdpuser"
+          Write-Host "User added to Administrators group."
 
-          Write-Host "Enabling Remote Desktop..."
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-
-          Write-Host "Enabling firewall rules for RDP..."
+          Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Write-Host "✅ RDP enabled successfully!"
+        }
+        catch {
+          Write-Error "❌ Error configuring RDP: $_"
+          exit 1
+        }
 
-          Write-Host "✅ RDP configured successfully."
+    - name: 🧱 Download ngrok
+      shell: pwsh
+      run: |
+        Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-amd64.zip" -OutFile "ngrok.zip"
+        Expand-Archive ngrok.zip
+        Copy-Item .\ngrok\ngrok.exe .\ngrok.exe
 
-      - name: Download ngrok
-        run: |
-          Invoke-WebRequest https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-windows-amd64.zip -OutFile ngrok.zip
-          Expand-Archive ngrok.zip
-          Copy-Item ngrok\ngrok.exe -Destination .
+    - name: 🔐 Connect ngrok account
+      shell: pwsh
+      env:
+        NGROK_AUTH_TOKEN: ${{ '355xkUcr6M0FvUN2PTK95Thc2Oe_2MSosbmm57GYoMJP7dUiR' }}
+      run: |
+        Write-Host "Connecting ngrok account..."
+        .\ngrok.exe authtoken $env:NGROK_AUTH_TOKEN
 
-      - name: Start ngrok TCP tunnel for RDP
-        env:
-          NGROK_AUTH_TOKEN: ${{ '355xkUcr6M0FvUN2PTK95Thc2Oe_2MSosbmm57GYoMJP7dUiR' }}
-        run: |
-          .\ngrok.exe authtoken $env:NGROK_AUTH_TOKEN
-          Start-Process -FilePath .\ngrok.exe -ArgumentList "tcp 3389" -NoNewWindow
-          Start-Sleep -Seconds 10
-          Invoke-WebRequest -Uri "http://127.0.0.1:4040/api/tunnels" | Out-File tunnel.json
-          Get-Content tunnel.json
+    - name: 🚀 Start ngrok TCP tunnel for RDP
+      shell: pwsh
+      run: |
+        Start-Process -FilePath .\ngrok.exe -ArgumentList "tcp 3389" -NoNewWindow
+        Write-Host "⏳ Waiting for ngrok to start..."
+        $started = $false
+        for ($i = 0; $i -lt 30; $i++) {
+            Start-Sleep -Seconds 5
+            try {
+                Invoke-WebRequest -Uri "http://127.0.0.1:4040/api/tunnels" -UseBasicParsing | Out-File tunnel.json
+                $started = $true
+                break
+            } catch {
+                Write-Host "Still waiting... ($i)"
+            }
+        }
+        if (-not $started) {
+            Write-Error "❌ Ngrok failed to start within expected time!"
+            exit 1
+        }
+        Write-Host "✅ Ngrok started successfully."
+        Get-Content tunnel.json
 
-      - name: Keep alive
-        shell: pwsh
-        run: |
-          Write-Host "Runner will stay alive for 6 hours (360m)..."
-          for ($i = 0; $i -lt 360; $i++) {
-            Start-Sleep -Seconds 60
-          }
+    - name: 🖥️ Print RDP connection info
+      shell: pwsh
+      run: |
+        $json = Get-Content tunnel.json | ConvertFrom-Json
+        $url = $json.tunnels.public_url
+        Write-Host "=============================="
+        Write-Host "✅ RDP is Ready!"
+        Write-Host "👉 Address: $url"
+        Write-Host "👉 User: rdpuser"
+        Write-Host "👉 Pass: Huyhz@123"
+        Write-Host "=============================="
+
+    - name: ⏳ Keep runner alive (6h)
+      shell: pwsh
+      run: |
+        Write-Host "Runner will stay alive for 6 hours..."
+        for ($i = 0; $i -lt 360; $i++) {
+          Start-Sleep -Seconds 60
+          Write-Host "Still alive ($i min)"
+        }
 
